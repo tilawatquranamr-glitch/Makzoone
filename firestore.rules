@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ضع هنا الـ UID الخاص بحسابك (أو حسابات الموظفين) من Firebase Console > Authentication
+    function isStaff() {
+      return request.auth != null
+        && request.auth.uid in ['PUT_YOUR_UID_HERE'];
+    }
+
+    match /{document=**} {
+      allow read, write: if isStaff();
+    }
+  }
+}

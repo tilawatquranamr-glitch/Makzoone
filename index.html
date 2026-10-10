@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ماكزوني - نظام إدارة المخزون والمبيعات السحابي</title>
+
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <!-- كل المكتبات مثبتة على إصدارات محددة -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { primary: '#3b82f6', darkBg: '#0f172a', cardDark: '#1e293b' } } }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer components {
+            .inp { @apply w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500; }
+            .card { @apply bg-white dark:bg-cardDark rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700; }
+            .lbl { @apply block text-xs font-semibold mb-1 text-slate-500; }
+            .th { @apply py-3 px-4; }
+            .td { @apply py-3 px-4; }
+        }
+    </style>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        body { font-family: 'Cairo', sans-serif; }
+        button { -webkit-user-select: none; user-select: none; }
+
+        /* الطباعة: تظهر الفاتورة فقط (والعربية تعمل بشكل طبيعي لأن الطباعة من المتصفح) */
+        @media print {
+            body > *:not(#invoiceModal) { display: none !important; }
+            #invoiceModal { position: absolute !important; inset: 0 !important; background: #fff !important; backdrop-filter: none !important; display: block !important; padding: 0 !important; }
+            #invoiceBox { box-shadow: none !important; border: 0 !important; background: #fff !important; color: #000 !important; max-width: 100% !important; }
+            #invoiceBox * { color: #000 !important; border-color: #999 !important; }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-darkBg text-slate-800 dark:text-slate-100 min-h-screen transition-colors duration-300">
+
+    <div id="toastBox" class="fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center pointer-events-none"></div>
+
+    <!-- Login -->
+    <div id="loginModal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-cardDark max-w-sm w-full p-8 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-700 space-y-5 text-center">
+            <div class="bg-blue-600 text-white w-16 h-16 rounded-2xl mx-auto flex items-center justify-center shadow-lg text-2xl">
+                <i class="fa-solid fa-lock"></i>
+            </div>
+            <div>
+                <h2 class="text-xl font-bold">تسجيل الدخول</h2>
+                <p class="text-xs text-slate-500 mt-1">سجّل بحسابك للوصول إلى بيانات المتجر</p>
+            </div>
+            <input type="email" id="loginEmail" placeholder="البريد الإلكتروني" autocomplete="username" dir="ltr" class="inp text-center">
+            <input type="password" id="loginPassword" placeholder="كلمة المرور" autocomplete="current-password" dir="ltr" class="inp text-center">
+            <button id="loginBtn" onclick="handleLogin()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold transition shadow-lg shadow-blue-600/20">دخول</button>
+            <button onclick="resetPassword()" class="text-xs text-blue-600 hover:underline">نسيت كلمة المرور؟</button>
+        </div>
+    </div>
+
+    <!-- Confirm -->
+    <div id="confirmModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[90] hidden flex items-center justify-center p-4">
+        <div class="card max-w-sm w-full p-6 space-y-5 text-center">
+            <p id="confirmText" class="font-semibold"></p>
+            <div class="flex gap-2">
+                <button id="confirmYes" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold">تأكيد</button>
+                <button id="confirmNo" class="flex-1 bg-slate-200 dark:bg-slate-700 py-2.5 rounded-xl text-sm font-semibold">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-white dark:bg-cardDark shadow-sm sticky top-0 z-40 border-b border-slate-200 dark:border-slate-700">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="bg-blue-600 text-white p-2.5 rounded-xl shadow-lg"><i class="fa-solid fa-boxes-stacked text-xl"></i></div>
+                <div>
+                    <h1 id="displayShopName" class="text-xl font-bold tracking-tight">ماكزوني - السحابي</h1>
+                    <p id="displayUser" class="text-xs text-slate-500 dark:text-slate-400" dir="ltr" style="text-align:right">إدارة المخزون والمبيعات</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <button id="themeToggle" class="p-2 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition" title="تبديل المظهر" aria-label="تبديل المظهر">
+                    <i class="fa-solid fa-moon dark:hidden text-slate-700"></i>
+                    <i class="fa-solid fa-sun hidden dark:block text-yellow-400"></i>
+                </button>
+                <button onclick="openSettings()" class="p-2 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition" title="الإعدادات" aria-label="الإعدادات">
+                    <i class="fa-solid fa-gear text-slate-700 dark:text-slate-200"></i>
+                </button>
+                <button onclick="logout()" class="p-2 rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 hover:bg-red-100 transition" title="تسجيل خروج" aria-label="تسجيل خروج">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <nav class="max-w-7xl mx-auto px-4 mt-6">
+        <div class="flex overflow-x-auto gap-2 bg-white dark:bg-cardDark p-2 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <button onclick="switchTab('dashboard')" id="tab-dashboard-btn" class="tab-btn px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 whitespace-nowrap bg-blue-600 text-white transition"><i class="fa-solid fa-chart-pie"></i> <span>الرئيسية</span></button>
+            <button onclick="switchTab('inventory')" id="tab-inventory-btn" class="tab-btn px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 whitespace-nowrap text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><i class="fa-solid fa-warehouse"></i> <span>المخزون والأصناف</span></button>
+            <button onclick="switchTab('sales')" id="tab-sales-btn" class="tab-btn px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 whitespace-nowrap text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><i class="fa-solid fa-cash-register"></i> <span>المبيعات والفواتير</span></button>
+            <button onclick="switchTab('purchases')" id="tab-purchases-btn" class="tab-btn px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 whitespace-nowrap text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><i class="fa-solid fa-truck-ramp-box"></i> <span>المشتريات</span></button>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 py-6">
+
+        <div id="lowStockAlert" class="hidden mb-6 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 p-4 rounded-2xl flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <i class="fa-solid fa-triangle-exclamation text-amber-500 text-xl"></i>
+                <div>
+                    <h4 class="font-bold text-amber-800 dark:text-amber-300">تنبيه انخفاض المخزون</h4>
+                    <p id="lowStockText" class="text-xs text-amber-700 dark:text-amber-400">بعض الأصناف وصلت للحد الأدنى.</p>
+                </div>
+            </div>
+            <button onclick="switchTab('inventory')" class="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg transition whitespace-nowrap">عرض الأصناف</button>
+        </div>
+
+        <!-- DASHBOARD -->
+        <section id="view-dashboard" class="space-y-6">
+            <div class="flex items-center justify-between">
+                <h2 class="font-bold text-lg">ملخص النشاط</h2>
+                <select id="statsPeriod" onchange="refreshStats()" class="inp !w-auto">
+                    <option value="today">اليوم</option>
+                    <option value="month">هذا الشهر</option>
+                    <option value="all">الكل</option>
+                </select>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="card p-5">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-500 dark:text-slate-400 text-sm">عدد الأصناف</span>
+                        <div class="p-3 bg-blue-50 dark:bg-blue-900/30 text-blue-600 rounded-xl"><i class="fa-solid fa-box text-lg"></i></div>
+                    </div>
+                    <h3 id="statTotalItems" class="text-2xl font-bold mt-3">0</h3>
+                    <p class="text-xs text-slate-400 mt-1">إجمالي القطع: <span id="statTotalQty">0</span></p>
+                </div>
+                <div class="card p-5">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-500 dark:text-slate-400 text-sm">المبيعات</span>
+                        <div class="p-3 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 rounded-xl"><i class="fa-solid fa-money-bill-wave text-lg"></i></div>
+                    </div>
+                    <h3 id="statTotalSales" class="text-2xl font-bold mt-3">0.00</h3>
+                    <p class="text-xs text-slate-400 mt-1">عدد الفواتير: <span id="statSalesCount">0</span></p>
+                </div>
+                <div class="card p-5">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-500 dark:text-slate-400 text-sm">المشتريات</span>
+                        <div class="p-3 bg-purple-50 dark:bg-purple-900/30 text-purple-600 rounded-xl"><i class="fa-solid fa-cart-shopping text-lg"></i></div>
+                    </div>
+                    <h3 id="statTotalPurchases" class="text-2xl font-bold mt-3">0.00</h3>
+                </div>
+                <div class="card p-5">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-500 dark:text-slate-400 text-sm">الربح (بيع − تكلفة المباع)</span>
+                        <div class="p-3 bg-amber-50 dark:bg-amber-900/30 text-amber-600 rounded-xl"><i class="fa-solid fa-chart-line text-lg"></i></div>
+                    </div>
+                    <h3 id="statNetProfit" class="text-2xl font-bold mt-3">0.00</h3>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="card p-6 space-y-4">
+                    <h3 class="font-bold text-lg mb-2 flex items-center gap-2"><i class="fa-solid fa-bolt text-blue-500"></i> إجراءات سريعة وتقفيل اليومية</h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="switchTab('inventory'); openAddItemModal();" class="p-4 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-slate-200 dark:border-slate-700 rounded-xl text-center transition flex flex-col items-center gap-2">
+                            <i class="fa-solid fa-plus-circle text-blue-600 text-xl"></i><span class="text-sm font-semibold">إضافة صنف جديد</span>
+                        </button>
+                        <button onclick="switchTab('sales')" class="p-4 bg-slate-50 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 border border-slate-200 dark:border-slate-700 rounded-xl text-center transition flex flex-col items-center gap-2">
+                            <i class="fa-solid fa-cash-register text-emerald-600 text-xl"></i><span class="text-sm font-semibold">تسجيل مبيعات</span>
+                        </button>
+                    </div>
+                    <button onclick="sendDailyReportEmail()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20">
+                        <i class="fa-solid fa-envelope-circle-check text-lg"></i> تجهيز تقرير اليوم في الإيميل
+                    </button>
+                    <p class="text-xs text-slate-400">التقرير يشمل مبيعات ومشتريات اليوم فقط، ويُفتح في تطبيق البريد لتراجعه وترسله.</p>
+                </div>
+                <div class="card p-6">
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left text-blue-500"></i> آخر الحركات</h3>
+                    <div id="recentActivitiesList" class="space-y-3 max-h-56 overflow-y-auto"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- INVENTORY -->
+        <section id="view-inventory" class="hidden space-y-6">
+            <div class="card p-6">
+                <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+                    <div class="relative w-full sm:w-72">
+                        <input type="text" id="searchInventory" oninput="renderInventory()" placeholder="ابحث باسم الصنف أو الباركود..." class="inp !pl-10">
+                        <i class="fa-solid fa-search absolute left-3 top-3 text-slate-400"></i>
+                    </div>
+                    <div class="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
+                        <button onclick="openAddItemModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition"><i class="fa-solid fa-plus"></i> <span>إضافة صنف</span></button>
+                        <button onclick="openCameraScanner('inventory')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition"><i class="fa-solid fa-camera"></i> <span>مسح باركود</span></button>
+                        <button onclick="exportInventoryExcel()" class="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition"><i class="fa-solid fa-file-excel"></i> <span>Excel</span></button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400">
+                                <th class="th">الباركود</th><th class="th">اسم الصنف</th><th class="th">الكمية</th><th class="th">سعر الجملة</th><th class="th">سعر البيع</th><th class="th text-center">الإجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventoryTableBody" class="divide-y divide-slate-100 dark:divide-slate-800 text-sm"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- SALES -->
+        <section id="view-sales" class="hidden space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="card p-6 lg:col-span-1 space-y-4">
+                    <h3 class="font-bold text-lg flex items-center gap-2"><i class="fa-solid fa-cash-register text-emerald-500"></i> تسجيل عملية بيع</h3>
+                    <div><label class="lbl">اسم العميل</label><input type="text" id="saleCustomerName" placeholder="عميل نقدي" class="inp"></div>
+                    <div><label class="lbl">رقم هاتف العميل (واتساب)</label><input type="tel" id="saleCustomerPhone" placeholder="01012345678" dir="ltr" class="inp text-right"></div>
+                    <div>
+                        <label class="lbl">اختر الصنف</label>
+                        <div class="flex gap-2">
+                            <select id="saleItemSelect" class="inp flex-1"></select>
+                            <button onclick="openCameraScanner('sale')" class="bg-emerald-600 text-white px-3 py-2 rounded-xl text-sm" aria-label="مسح باركود"><i class="fa-solid fa-camera"></i></button>
+                        </div>
+                    </div>
+                    <div><label class="lbl">الكمية المباعة</label><input type="number" id="saleQuantity" value="1" min="1" step="1" class="inp"></div>
+                    <button onclick="addCartItem()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"><i class="fa-solid fa-cart-plus"></i> إضافة للفاتورة</button>
+                </div>
+
+                <div class="card p-6 lg:col-span-2 space-y-4 flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-lg">بنود الفاتورة الحالية</h3>
+                            <button onclick="clearCart()" class="text-xs text-red-500 hover:underline"><i class="fa-solid fa-trash"></i> إفراغ القائمة</button>
+                        </div>
+                        <div class="overflow-x-auto max-h-64 overflow-y-auto">
+                            <table class="w-full text-right border-collapse">
+                                <thead><tr class="border-b border-slate-200 dark:border-slate-700 text-xs text-slate-500">
+                                    <th class="py-2 px-3">الصنف</th><th class="py-2 px-3">الكمية</th><th class="py-2 px-3">السعر</th><th class="py-2 px-3">الإجمالي</th><th class="py-2 px-3 text-center">حذف</th>
+                                </tr></thead>
+                                <tbody id="cartTableBody" class="divide-y divide-slate-100 dark:divide-slate-800 text-sm"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-200 dark:border-slate-700 pt-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div class="text-xl font-bold">إجمالي الفاتورة: <span id="cartTotalPrice" class="text-emerald-600">0.00</span></div>
+                        <div class="flex gap-2 w-full sm:w-auto flex-wrap">
+                            <button id="btnSalePrint" onclick="completeSale('print')" class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition"><i class="fa-solid fa-print"></i> حفظ وطباعة / PDF</button>
+                            <button id="btnSaleWa" onclick="completeSale('whatsapp')" class="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition"><i class="fa-brands fa-whatsapp"></i> حفظ وإرسال واتساب</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card p-6 space-y-4">
+                <div class="flex flex-wrap justify-between items-center gap-3">
+                    <h3 class="font-bold text-lg">سجل المبيعات</h3>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <input type="text" id="salesSearch" oninput="renderSalesHistory()" placeholder="بحث برقم الفاتورة أو العميل" class="inp !w-52">
+                        <input type="date" id="salesDate" onchange="renderSalesHistory()" class="inp !w-auto">
+                        <button onclick="exportSalesExcel()" class="bg-slate-700 hover:bg-slate-800 text-white px-3 py-2 rounded-xl text-sm font-semibold"><i class="fa-solid fa-file-excel"></i> Excel</button>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-400">يعرض آخر 100 فاتورة.</p>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right border-collapse">
+                        <thead><tr class="border-b border-slate-200 dark:border-slate-700 text-xs text-slate-500">
+                            <th class="th">رقم الفاتورة</th><th class="th">التاريخ والوقت</th><th class="th">العميل</th><th class="th">الإجمالي</th><th class="th text-center">إجراءات</th>
+                        </tr></thead>
+                        <tbody id="salesHistoryTableBody" class="divide-y divide-slate-100 dark:divide-slate-800 text-sm"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- PURCHASES -->
+        <section id="view-purchases" class="hidden space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="card p-6 space-y-4 lg:col-span-1">
+                    <h3 class="font-bold text-lg flex items-center gap-2"><i class="fa-solid fa-truck-ramp-box text-purple-500"></i> إضافة مشتريات للمخزون</h3>
+                    <div><label class="lbl">اسم المورد</label><input type="text" id="purchaseSupplier" placeholder="المورد الرئيسي" class="inp"></div>
+                    <div>
+                        <label class="lbl">الصنف</label>
+                        <div class="flex gap-2">
+                            <select id="purchaseItemSelect" onchange="prefillPurchaseCost()" class="inp flex-1"></select>
+                            <button onclick="openAddItemModal()" class="bg-purple-600 text-white px-3 py-2 rounded-xl text-sm" title="صنف جديد" aria-label="صنف جديد"><i class="fa-solid fa-plus"></i></button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><label class="lbl">الكمية</label><input type="number" id="purchaseQuantity" value="1" min="1" step="1" class="inp"></div>
+                        <div><label class="lbl">تكلفة الوحدة</label><input type="number" id="purchaseCost" value="0" step="0.01" min="0" class="inp"></div>
+                    </div>
+                    <p class="text-xs text-slate-400">تكلفة الوحدة تتحدث تلقائياً كسعر جملة للصنف (آخر سعر شراء).</p>
+                    <button id="btnPurchase" onclick="addPurchase()" class="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-semibold transition">حفظ وتحديث المخزون</button>
+                </div>
+                <div class="card p-6 lg:col-span-2 space-y-4">
+                    <h3 class="font-bold text-lg">سجل المشتريات</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-right border-collapse">
+                            <thead><tr class="border-b border-slate-200 dark:border-slate-700 text-xs text-slate-500">
+                                <th class="th">التاريخ</th><th class="th">المورد</th><th class="th">الصنف</th><th class="th">الكمية</th><th class="th">التكلفة</th><th class="th">الإجمالي</th>
+                            </tr></thead>
+                            <tbody id="purchasesTableBody" class="divide-y divide-slate-100 dark:divide-slate-800 text-sm"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Scanner -->
+    <div id="scannerModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="card max-w-md w-full p-6 space-y-4 text-center">
+            <h3 class="font-bold text-lg">مسح الباركود بالكاميرا</h3>
+            <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
+            <button onclick="closeCameraScanner()" class="w-full bg-slate-200 dark:bg-slate-700 py-2.5 rounded-xl text-sm font-semibold transition">إغلاق الكاميرا</button>
+        </div>
+    </div>
+
+    <!-- Item modal -->
+    <div id="itemModal" class="fixed inset-0 bg-slate-950/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="card max-w-md w-full p-6 space-y-4 max-h-full overflow-y-auto">
+            <h3 id="itemModalTitle" class="font-bold text-lg">إضافة صنف جديد</h3>
+            <input type="hidden" id="editItemOriginalBarcode" value="">
+            <div><label class="lbl">الباركود</label><input type="text" id="modalBarcode" dir="ltr" class="inp text-right"></div>
+            <div><label class="lbl">اسم الصنف</label><input type="text" id="modalName" class="inp"></div>
+            <div class="grid grid-cols-2 gap-3">
+                <div><label class="lbl">الكمية</label><input type="number" id="modalQuantity" value="10" min="0" step="1" class="inp"></div>
+                <div><label class="lbl">حد التنبيه</label><input type="number" id="modalMinStock" value="3" min="0" step="1" class="inp"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div><label class="lbl">سعر الجملة</label><input type="number" id="modalWholesale" value="0" min="0" step="0.01" class="inp"></div>
+                <div><label class="lbl">سعر البيع</label><input type="number" id="modalRetail" value="0" min="0" step="0.01" class="inp"></div>
+            </div>
+            <div class="flex gap-2 pt-3">
+                <button id="btnSaveItem" onclick="saveItem()" class="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-semibold transition">حفظ</button>
+                <button onclick="closeModal('itemModal')" class="bg-slate-200 dark:bg-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold transition">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="settingsModal" class="fixed inset-0 bg-slate-950/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="card max-w-md w-full p-6 space-y-4">
+            <h3 class="font-bold text-lg">الإعدادات</h3>
+            <div><label class="lbl">اسم المتجر</label><input type="text" id="settingsShopName" class="inp"></div>
+            <div><label class="lbl">البريد الإلكتروني للتقارير</label><input type="email" id="settingsEmail" dir="ltr" class="inp text-right"></div>
+            <div><label class="lbl">رقم الهاتف الأساسي</label><input type="tel" id="settingsPhone" dir="ltr" class="inp text-right"></div>
+            <p class="text-xs text-slate-400">الإعدادات تُحفظ سحابياً وتظهر على كل أجهزتك. لتغيير كلمة المرور استخدم "نسيت كلمة المرور؟" من شاشة الدخول.</p>
+            <div class="flex gap-2 pt-3">
+                <button onclick="saveSettings()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-semibold transition">حفظ الإعدادات</button>
+                <button onclick="closeModal('settingsModal')" class="bg-slate-200 dark:bg-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold transition">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invoice -->
+    <div id="invoiceModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 overflow-y-auto">
+        <div id="invoiceBox" class="card max-w-md w-full p-6 space-y-4 my-auto">
+            <div id="invoiceContent"></div>
+            <div class="flex gap-2 pt-2 no-print">
+                <button onclick="window.print()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-semibold"><i class="fa-solid fa-print"></i> طباعة / حفظ PDF</button>
+                <button onclick="closeModal('invoiceModal')" class="bg-slate-200 dark:bg-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold">إغلاق</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ================= Service Worker =================
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').catch(err => console.log('SW reg error:', err));
+            });
+        }
+
+        // ================= Firebase =================
+        const firebaseConfig = {
+            apiKey: "AIzaSyBAiMtxI567TOgzwvppsChWvK",
+            authDomain: "makzoone.firebaseapp.com",
+            projectId: "makzoone",
+            storageBucket: "makzoone.appspot.com",
+            messagingSenderId: "1036305595569",
+            appId: "1:1036305595569:web:a12dccacf452",
+            measurementId: "G-H2GT6YPZH9"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const TS = firebase.firestore.Timestamp;
+        const FV = firebase.firestore.FieldValue;
+        db.enablePersistence({ synchronizeTabs: true }).catch(() => { /* المتصفح لا يدعم الكاش أو مفتوح في تبويب قديم */ });
+
+        // ================= Helpers =================
+        const $ = id => document.getElementById(id);
+        const CUR = 'ج.م';
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const fmt = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const pad = n => String(n).padStart(2, '0');
+        const tsToDate = t => (t && t.toDate) ? t.toDate() : (t instanceof Date ? t : new Date());
+        const fmtDT = t => tsToDate(t).toLocaleString('ar-EG');
+        const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        const startOfToday = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+
+        function toast(msg, type = 'info') {
+            const el = document.createElement('div');
+            el.className = 'px-4 py-2.5 rounded-xl text-sm shadow-lg text-white pointer-events-auto ' + ({ success: 'bg-emerald-600', error: 'bg-red-600', info: 'bg-slate-800' }[type] || 'bg-slate-800');
+            el.textContent = msg;
+            $('toastBox').appendChild(el);
+            setTimeout(() => el.remove(), 4000);
+        }
+
+        function confirmDialog(msg) {
+            return new Promise(resolve => {
+                $('confirmText').textContent = msg;
+                $('confirmModal').classList.remove('hidden');
+                const done = v => { $('confirmModal').classList.add('hidden'); $('confirmYes').onclick = null; $('confirmNo').onclick = null; resolve(v); };
+                $('confirmYes').onclick = () => done(true);
+                $('confirmNo').onclick = () => done(false);
+            });
+        }
+
+        function setBusy(ids, busy) { ids.forEach(id => { const el = $(id); if (el) el.disabled = busy; }); }
+        function closeModal(id) { $(id).classList.add('hidden'); }
+
+        function normalizePhone(p) {
+            let d = String(p || '').replace(/\D/g, '');
+            if (d.startsWith('00')) d = d.slice(2);
+            if (d.startsWith('0')) d = '20' + d.slice(1);   // رقم مصري محلي
+            return d;
+        }
+
+        function logActivity(text) {
+            db.collection('activities').add({
+                text,
+                user: (auth.currentUser && auth.currentUser.email) || '',
+                createdAt: TS.now()
+            }).catch(() => {});
+        }
+
+        // ================= State =================
+        let shopName = 'ماكزوني التجاري';
+        let userEmail = '';
+        let userPhone = '';
+        let inventory = [];
+        let invMap = {};
+        let salesHistory = [];
+        let currentCart = [];
+        let html5QrCode = null;
+        let scannerTarget = null;
+        let scanHandled = false;
+        let unsubs = [];
+        let statsTimer = null;
+        let saleBusy = false;
+
+        // ================= Theme =================
+        if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+        $('themeToggle').addEventListener('click', () => {
+            const dark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', dark ? 'dark' : 'light');
+        });
+
+        // ================= Auth =================
+        function authErrorMessage(e) {
+            const map = {
+                'auth/invalid-email': 'البريد الإلكتروني غير صحيح',
+                'auth/user-not-found': 'لا يوجد حساب بهذا البريد',
+                'auth/wrong-password': 'كلمة المرور غير صحيحة',
+                'auth/invalid-credential': 'البريد أو كلمة المرور غير صحيحة',
+                'auth/too-many-requests': 'محاولات كثيرة، حاول لاحقاً',
+                'auth/network-request-failed': 'تحقق من اتصال الإنترنت',
+                'auth/user-disabled': 'هذا الحساب موقوف'
+            };
+            return map[e.code] || ('تعذر تسجيل الدخول: ' + (e.message || e.code));
+        }
+
+        async function handleLogin() {
+            const email = $('loginEmail').value.trim();
+            const pass = $('loginPassword').value;
+            if (!email || !pass) return toast('أدخل البريد وكلمة المرور', 'error');
+            setBusy(['loginBtn'], true);
+            try {
+                await auth.signInWithEmailAndPassword(email, pass);
+                $('loginPassword').value = '';
+            } catch (e) {
+                toast(authErrorMessage(e), 'error');
+            } finally { setBusy(['loginBtn'], false); }
+        }
+        ['loginEmail', 'loginPassword'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); }));
+
+        async function resetPassword() {
+            const email = $('loginEmail').value.trim();
+            if (!email) return toast('اكتب بريدك أولاً ثم اضغط "نسيت كلمة المرور؟"', 'error');
+            try {
+                await auth.sendPasswordResetEmail(email);
+                toast('تم إرسال رابط إعادة تعيين كلمة المرور لبريدك', 'success');
+            } catch (e) { toast(authErrorMessage(e), 'error'); }
+        }
+
+        function logout() { auth.signOut(); }
+
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                $('loginModal').classList.add('hidden');
+                $('displayUser').textContent = user.email;
+                startListeners();
+            } else {
+                stopListeners();
+                $('loginModal').classList.remove('hidden');
+            }
+        });
+
+        // ================= Realtime listeners =================
+        function onErr(e) {
+            console.error(e);
+            toast(e.code === 'permission-denied' ? 'ليس لديك صلاحية الوصول للبيانات (راجع قواعد Firestore)' : 'خطأ في الاتصال بقاعدة البيانات', 'error');
+        }
+
+        function startListeners() {
+            stopListeners();
+
+            unsubs.push(db.collection('inventory').onSnapshot(snap => {
+                inventory = snap.docs.map(d => ({ ...d.data(), barcode: d.id }));
+                inventory.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar'));
+                invMap = Object.fromEntries(inventory.map(i => [i.barcode, i]));
+                renderInventory();
+                renderSalesSelect();
+                renderPurchasesSelect();
+                checkLowStock();
+                $('statTotalItems').textContent = inventory.length;
+                $('statTotalQty').textContent = inventory.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+            }, onErr));
+
+            unsubs.push(db.collection('sales').orderBy('createdAt', 'desc').limit(100).onSnapshot(snap => {
+                salesHistory = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                renderSalesHistory();
+                scheduleStats();
+            }, onErr));
+
+            unsubs.push(db.collection('purchases').orderBy('createdAt', 'desc').limit(100).onSnapshot(snap => {
+                renderPurchasesHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                scheduleStats();
+            }, onErr));
+
+            unsubs.push(db.collection('activities').orderBy('createdAt', 'desc').limit(10).onSnapshot(snap => {
+                renderActivities(snap.docs.map(d => d.data()));
+            }, onErr));
+
+            unsubs.push(db.doc('settings/main').onSnapshot(doc => {
+                const s = doc.exists ? doc.data() : {};
+                shopName = s.shopName || shopName;
+                userEmail = s.email || userEmail;
+                userPhone = s.phone || userPhone;
+                $('displayShopName').textContent = shopName;
+                document.title = shopName + ' - إدارة المخزون';
+            }, onErr));
+
+            refreshStats();
+        }
+
+        function stopListeners() {
+            unsubs.forEach(u => { try { u(); } catch (e) {} });
+            unsubs = [];
+            inventory = []; invMap = {}; salesHistory = []; currentCart = [];
+        }
+
+        // ================= Tabs =================
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('text-slate-600', 'dark:text-slate-300');
+            });
+            const active = $('tab-' + tabId + '-btn');
+            active.classList.add('bg-blue-600', 'text-white');
+            active.classList.remove('text-slate-600', 'dark:text-slate-300');
+            ['dashboard', 'inventory', 'sales', 'purchases'].forEach(t => $('view-' + t).classList.add('hidden'));
+            $('view-' + tabId).classList.remove('hidden');
+        }
+
+        // ================= Dashboard =================
+        function scheduleStats() { clearTimeout(statsTimer); statsTimer = setTimeout(refreshStats, 400); }
+
+        async function refreshStats() {
+            const period = $('statsPeriod').value;
+            const now = new Date();
+            let start = null;
+            if (period === 'today') start = startOfToday();
+            else if (period === 'month') start = new Date(now.getFullYear(), now.getMonth(), 1);
+
+            let sq = db.collection('sales'), pq = db.collection('purchases');
+            if (start) {
+                const t = TS.fromDate(start);
+                sq = sq.where('createdAt', '>=', t);
+                pq = pq.where('createdAt', '>=', t);
+            }
+            try {
+                const [ss, ps] = await Promise.all([sq.get(), pq.get()]);
+                let sales = 0, profit = 0, count = 0, purchases = 0;
+                ss.forEach(d => { const s = d.data(); if (s.status === 'cancelled') return; sales += Number(s.total) || 0; profit += Number(s.profit) || 0; count++; });
+                ps.forEach(d => { purchases += Number(d.data().total) || 0; });
+                $('statTotalSales').textContent = fmt(sales);
+                $('statSalesCount').textContent = count;
+                $('statTotalPurchases').textContent = fmt(purchases);
+                $('statNetProfit').textContent = fmt(profit);
+            } catch (e) { onErr(e); }
+        }
+
+        function checkLowStock() {
+            const low = inventory.filter(i => Number(i.qty) <= Number(i.minStock));
+            $('lowStockAlert').classList.toggle('hidden', low.length === 0);
+            if (low.length) $('lowStockText').textContent = `${low.length} صنف وصل للحد الأدنى أو أقل، يرجى مراجعتها.`;
+        }
+
+        function renderActivities(list) {
+            $('recentActivitiesList').innerHTML = list.map(a => `
+                <div class="flex items-start justify-between gap-3 text-xs p-2.5 bg-slate-50 dark:bg-slate-800 rounded-xl">
+                    <span>${esc(a.text)}</span>
+                    <span class="text-slate-400 whitespace-nowrap">${esc(fmtDT(a.createdAt))}</span>
+                </div>`).join('') || '<p class="text-xs text-slate-400">لا توجد حركات مسجلة.</p>';
+        }
+
+        async function sendDailyReportEmail() {
+            if (!userEmail) { toast('أضف بريد التقارير من الإعدادات أولاً', 'error'); return openSettings(); }
+            try {
+                const t = TS.fromDate(startOfToday());
+                const [ss, ps] = await Promise.all([
+                    db.collection('sales').where('createdAt', '>=', t).get(),
+                    db.collection('purchases').where('createdAt', '>=', t).get()
+                ]);
+                let sales = 0, profit = 0, count = 0, cancelled = 0, purchases = 0;
+                ss.forEach(d => { const s = d.data(); if (s.status === 'cancelled') { cancelled++; return; } sales += Number(s.total) || 0; profit += Number(s.profit) || 0; count++; });
+                ps.forEach(d => purchases += Number(d.data().total) || 0);
+
+                const subject = `تقرير تقفيل يومية - ${shopName} (${new Date().toLocaleDateString('ar-EG')})`;
+                let body = `تقرير اليومية:\n----------------------------------------\n`;
+                body += `المتجر: ${shopName}\nالتاريخ: ${new Date().toLocaleString('ar-EG')}\n`;
+                body += `مبيعات اليوم: ${fmt(sales)} ${CUR}\n`;
+                body += `عدد الفواتير: ${count}${cancelled ? ` (ملغاة: ${cancelled})` : ''}\n`;
+                body += `ربح اليوم (بيع − تكلفة المباع): ${fmt(profit)} ${CUR}\n`;
+                body += `مشتريات اليوم: ${fmt(purchases)} ${CUR}\n----------------------------------------\n`;
+                window.location.href = `mailto:${encodeURIComponent(userEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            } catch (e) { onErr(e); }
+        }
+
+        // ================= Inventory =================
+        function renderInventory() {
+            const q = $('searchInventory').value.trim().toLowerCase();
+            const rows = inventory.filter(i => String(i.name).toLowerCase().includes(q) || String(i.barcode).toLowerCase().includes(q));
+            $('inventoryTableBody').innerHTML = rows.map(i => {
+                const low = Number(i.qty) <= Number(i.minStock);
+                return `
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                    <td class="td font-mono">${esc(i.barcode)}</td>
+                    <td class="td font-semibold">${esc(i.name)}</td>
+                    <td class="td ${low ? 'text-amber-500 font-bold' : ''}">${esc(i.qty)}</td>
+                    <td class="td">${fmt(i.wholesale)}</td>
+                    <td class="td">${fmt(i.retail)}</td>
+                    <td class="td text-center whitespace-nowrap">
+                        <button data-act="edit-item" data-id="${esc(i.barcode)}" class="text-blue-500 p-1" aria-label="تعديل"><i class="fa-solid fa-pen"></i></button>
+                        <button data-act="del-item" data-id="${esc(i.barcode)}" class="text-red-500 p-1" aria-label="حذف"><i class="fa-solid fa-trash"></i></button>
+                    </td>
+                </tr>`;
+            }).join('') || `<tr><td colspan="6" class="text-center py-6 text-slate-400">لا توجد أصناف مطابقة.</td></tr>`;
+        }
+
+        function openAddItemModal() {
+            $('itemModalTitle').textContent = 'إضافة صنف جديد للمخزون';
+            $('editItemOriginalBarcode').value = '';
+            $('modalBarcode').value = 'BAR-' + Math.floor(100000 + Math.random() * 900000);
+            $('modalName').value = '';
+            $('modalQuantity').value = 10;
+            $('modalMinStock').value = 3;
+            $('modalWholesale').value = 0;
+            $('modalRetail').value = 0;
+            $('itemModal').classList.remove('hidden');
+        }
+
+        function editItem(barcode) {
+            const item = invMap[barcode];
+            if (!item) return;
+            $('itemModalTitle').textContent = 'تعديل الصنف';
+            $('editItemOriginalBarcode').value = item.barcode;
+            $('modalBarcode').value = item.barcode;
+            $('modalName').value = item.name;
+            $('modalQuantity').value = item.qty;
+            $('modalMinStock').value = item.minStock ?? 3;
+            $('modalWholesale').value = item.wholesale;
+            $('modalRetail').value = item.retail;
+            $('itemModal').classList.remove('hidden');
+        }
+
+        async function saveItem() {
+            const original = $('editItemOriginalBarcode').value;
+            const barcode = $('modalBarcode').value.trim();
+            const name = $('modalName').value.trim();
+            const qty = Number($('modalQuantity').value);
+            const minStock = Number($('modalMinStock').value);
+            const wholesale = Number($('modalWholesale').value);
+            const retail = Number($('modalRetail').value);
+
+            if (!barcode || !name) return toast('أدخل الباركود واسم الصنف', 'error');
+            if (barcode.includes('/')) return toast('الباركود لا يجوز أن يحتوي على /', 'error');
+            if (!Number.isInteger(qty) || qty < 0) return toast('الكمية يجب أن تكون عدداً صحيحاً صفر أو أكبر', 'error');
+            if (!Number.isInteger(minStock) || minStock < 0) return toast('حد التنبيه غير صحيح', 'error');
+            if (![wholesale, retail].every(n => Number.isFinite(n) && n >= 0)) return toast('الأسعار غير صحيحة', 'error');
+            if (retail < wholesale && !(await confirmDialog('سعر البيع أقل من سعر الجملة. هل تريد المتابعة؟'))) return;
+
+            const data = { barcode, name, qty, minStock, wholesale, retail };
+            setBusy(['btnSaveItem'], true);
+            try {
+                await db.runTransaction(async tx => {
+                    const newRef = db.collection('inventory').doc(barcode);
+                    const snap = await tx.get(newRef);
+                    const isRename = original && original !== barcode;
+                    if (snap.exists && (!original || isRename)) throw new Error('هذا الباركود مستخدم لصنف آخر');
+                    tx.set(newRef, data);
+                    if (isRename) tx.delete(db.collection('inventory').doc(original));
+                });
+                logActivity(original ? `تعديل صنف: ${name}` : `إضافة صنف: ${name}`);
+                closeModal('itemModal');
+                toast('تم حفظ الصنف', 'success');
+            } catch (e) { toast(e.message || 'تعذر حفظ الصنف', 'error'); }
+            finally { setBusy(['btnSaveItem'], false); }
+        }
+
+        async function deleteItem(barcode) {
+            const item = invMap[barcode];
+            if (!(await confirmDialog(`حذف الصنف "${item ? item.name : barcode}" نهائياً؟`))) return;
+            try {
+                await db.collection('inventory').doc(barcode).delete();
+                logActivity(`حذف صنف: ${item ? item.name : barcode}`);
+                toast('تم الحذف', 'success');
+            } catch (e) { onErr(e); }
+        }
+
+        // ================= Scanner =================
+        async function openCameraScanner(target) {
+            scannerTarget = target;
+            scanHandled = false;
+            $('scannerModal').classList.remove('hidden');
+            try {
+                html5QrCode = new Html5Qrcode('reader');
+                await html5QrCode.start({ facingMode: 'environment' }, { fps: 10, qrbox: 250 }, async text => {
+                    if (scanHandled) return;
+                    scanHandled = true;
+                    await closeCameraScanner();
+                    handleScanned(String(text).trim());
+                });
+            } catch (e) {
+                toast('تعذر تشغيل الكاميرا (تأكد من الصلاحيات)', 'error');
+                closeCameraScanner();
+            }
+        }
+
+        async function closeCameraScanner() {
+            if (html5QrCode) {
+                try { await html5QrCode.stop(); } catch (e) {}
+                try { html5QrCode.clear(); } catch (e) {}
+                html5QrCode = null;
+            }
+            $('scannerModal').classList.add('hidden');
+        }
+
+        function handleScanned(code) {
+            if (scannerTarget === 'inventory') {
+                $('searchInventory').value = code;
+                renderInventory();
+            } else if (scannerTarget === 'sale') {
+                if (invMap[code]) { $('saleItemSelect').value = code; toast('تم اختيار: ' + invMap[code].name, 'success'); }
+                else toast('لا يوجد صنف بالباركود: ' + code, 'error');
+            }
+        }
+
+        // ================= Sales =================
+        function renderSalesSelect() {
+            const sel = $('saleItemSelect');
+            const cur = sel.value;
+            sel.innerHTML = inventory.map(i => `<option value="${esc(i.barcode)}">${esc(i.name)} — ${fmt(i.retail)} ${CUR} (متاح: ${esc(i.qty)})</option>`).join('') || '<option value="">لا توجد أصناف</option>';
+            if (cur && invMap[cur]) sel.value = cur;
+        }
+
+        function addCartItem() {
+            const barcode = $('saleItemSelect').value;
+            const item = invMap[barcode];
+            if (!item) return toast('اختر صنفاً أولاً', 'error');
+            const qty = Number($('saleQuantity').value);
+            if (!Number.isInteger(qty) || qty < 1) return toast('الكمية غير صحيحة', 'error');
+            const existing = currentCart.find(c => c.barcode === barcode);
+            const already = existing ? existing.qty : 0;
+            if (already + qty > Number(item.qty)) return toast(`المتاح ${item.qty} فقط (في الفاتورة ${already})`, 'error');
+            if (existing) existing.qty += qty;
+            else currentCart.push({ barcode, name: item.name, qty, price: Number(item.retail) });
+            $('saleQuantity').value = 1;
+            renderCart();
+        }
+
+        function renderCart() {
+            let total = 0;
+            $('cartTableBody').innerHTML = currentCart.map((c, idx) => {
+                const sub = c.qty * c.price; total += sub;
+                return `<tr><td class="py-2 px-3">${esc(c.name)}</td><td class="py-2 px-3">${c.qty}</td><td class="py-2 px-3">${fmt(c.price)}</td><td class="py-2 px-3">${fmt(sub)}</td>
+                <td class="py-2 px-3 text-center"><button data-act="cart-del" data-id="${idx}" class="text-red-500" aria-label="حذف"><i class="fa-solid fa-trash"></i></button></td></tr>`;
+            }).join('') || `<tr><td colspan="5" class="text-center py-4 text-slate-400">الفاتورة فارغة</td></tr>`;
+            $('cartTotalPrice').textContent = fmt(total);
+        }
+
+        function clearCart() { currentCart = []; renderCart(); }
+
+        // تسجيل البيع كله في Transaction واحدة: فحص المخزون + الخصم + رقم الفاتورة + حفظ الفاتورة
+        async function processSale() {
+            const items = currentCart.map(c => ({ ...c }));
+            const customerName = $('saleCustomerName').value.trim() || 'عميل نقدي';
+            const customerPhone = $('saleCustomerPhone').value.trim();
+            const now = new Date();
+
+            return db.runTransaction(async tx => {
+                const counterRef = db.doc('meta/counters');
+                const counterSnap = await tx.get(counterRef);
+                const refs = items.map(i => db.collection('inventory').doc(i.barcode));
+                const snaps = await Promise.all(refs.map(r => tx.get(r)));
+
+                let total = 0, profit = 0;
+                const finalItems = [];
+                snaps.forEach((s, idx) => {
+                    const want = items[idx];
+                    if (!s.exists) throw new Error(`الصنف غير موجود: ${want.name}`);
+                    const d = s.data();
+                    if (Number(d.qty) < want.qty) throw new Error(`الكمية غير كافية للصنف "${d.name}" (المتاح ${d.qty})`);
+                    const price = Number(d.retail) || 0;
+                    const cost = Number(d.wholesale) || 0;
+                    total += price * want.qty;
+                    profit += (price - cost) * want.qty;
+                    finalItems.push({ barcode: s.id, name: d.name, qty: want.qty, price, cost });
+                    tx.update(refs[idx], { qty: Number(d.qty) - want.qty });
+                });
+
+                const next = (counterSnap.exists ? Number(counterSnap.data().invoice) || 0 : 0) + 1;
+                tx.set(counterRef, { invoice: next }, { merge: true });
+                const invoiceNo = 'INV-' + String(next).padStart(6, '0');
+                const sale = {
+                    invoiceNo, customerName, customerPhone, total, profit, items: finalItems,
+                    status: 'active', dateKey: dateKey(now), createdAt: TS.fromDate(now),
+                    createdBy: (auth.currentUser && auth.currentUser.email) || ''
+                };
+                tx.set(db.collection('sales').doc(invoiceNo), sale);
+                return sale;
+            });
+        }
+
+        async function completeSale(mode) {
+            if (saleBusy) return;
+            if (currentCart.length === 0) return toast('الفاتورة فارغة', 'error');
+
+            let phone = '';
+            let waWindow = null;
+            if (mode === 'whatsapp') {
+                phone = normalizePhone($('saleCustomerPhone').value);
+                if (phone.length < 10) return toast('أدخل رقم هاتف صحيح للعميل', 'error');
+                waWindow = window.open('', '_blank');   // يُفتح فوراً حتى لا يمنعه المتصفح
+            }
+
+            saleBusy = true;
+            setBusy(['btnSalePrint', 'btnSaleWa'], true);
+            try {
+                const sale = await processSale();
+                logActivity(`بيع فاتورة ${sale.invoiceNo} بقيمة ${fmt(sale.total)} ${CUR}`);
+                currentCart = []; renderCart();
+                $('saleCustomerName').value = ''; $('saleCustomerPhone').value = '';
+                toast('تم تسجيل الفاتورة ' + sale.invoiceNo, 'success');
+
+                if (mode === 'whatsapp') {
+                    const url = `https://wa.me/${phone}?text=${encodeURIComponent(whatsappText(sale))}`;
+                    if (waWindow) waWindow.location.href = url; else window.location.href = url;
+                } else {
+                    showInvoice(sale);
+                }
+            } catch (e) {
+                if (waWindow) waWindow.close();
+                toast(e.message || 'تعذر تسجيل الفاتورة (تحتاج اتصال بالإنترنت)', 'error');
+            } finally {
+                saleBusy = false;
+                setBusy(['btnSalePrint', 'btnSaleWa'], false);
+            }
+        }
+
+        function whatsappText(s) {
+            let m = `*فاتورة مبيعات - ${shopName}*\nرقم: ${s.invoiceNo}\nالتاريخ: ${fmtDT(s.createdAt)}\nالعميل: ${s.customerName}\n\n`;
+            s.items.forEach(i => { m += `• ${i.name} × ${i.qty} = ${fmt(i.qty * i.price)}\n`; });
+            m += `\n*الإجمالي: ${fmt(s.total)} ${CUR}*\nشكراً لتعاملكم معنا!`;
+            return m;
+        }
+
+        function showInvoice(s) {
+            const rows = s.items.map(i => `<tr class="border-b border-slate-200 dark:border-slate-700">
+                <td class="py-1.5">${esc(i.name)}</td><td class="py-1.5 text-center">${i.qty}</td><td class="py-1.5 text-center">${fmt(i.price)}</td><td class="py-1.5 text-left">${fmt(i.qty * i.price)}</td></tr>`).join('');
+            $('invoiceContent').innerHTML = `
+                <div class="text-center space-y-1 mb-4">
+                    <h2 class="text-xl font-bold">${esc(shopName)}</h2>
+                    ${userPhone ? `<p class="text-xs" dir="ltr">${esc(userPhone)}</p>` : ''}
+                    <p class="text-sm font-semibold">فاتورة مبيعات ${s.status === 'cancelled' ? '(ملغاة)' : ''}</p>
+                </div>
+                <div class="text-xs space-y-1 mb-3">
+                    <div class="flex justify-between"><span>رقم الفاتورة</span><b>${esc(s.invoiceNo)}</b></div>
+                    <div class="flex justify-between"><span>التاريخ</span><span>${esc(fmtDT(s.createdAt))}</span></div>
+                    <div class="flex justify-between"><span>العميل</span><span>${esc(s.customerName)}</span></div>
+                </div>
+                <table class="w-full text-sm text-right">
+                    <thead><tr class="border-b-2 border-slate-300 text-xs"><th class="py-1.5">الصنف</th><th class="py-1.5 text-center">الكمية</th><th class="py-1.5 text-center">السعر</th><th class="py-1.5 text-left">الإجمالي</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <div class="flex justify-between text-lg font-bold mt-4"><span>الإجمالي</span><span>${fmt(s.total)} ${CUR}</span></div>
+                <p class="text-center text-xs mt-4">شكراً لتعاملكم معنا</p>`;
+            $('invoiceModal').classList.remove('hidden');
+        }
+
+        function renderSalesHistory() {
+            const q = $('salesSearch').value.trim().toLowerCase();
+            const day = $('salesDate').value;
+            const rows = salesHistory.filter(s =>
+                (!q || String(s.invoiceNo).toLowerCase().includes(q) || String(s.customerName).toLowerCase().includes(q)) &&
+                (!day || s.dateKey === day));
+            $('salesHistoryTableBody').innerHTML = rows.map(s => {
+                const cancelled = s.status === 'cancelled';
+                return `<tr class="${cancelled ? 'opacity-60' : ''}">
+                    <td class="td font-bold">${esc(s.invoiceNo)} ${cancelled ? '<span class="text-xs text-red-500 font-normal">(ملغاة)</span>' : ''}</td>
+                    <td class="td text-xs">${esc(fmtDT(s.createdAt))}</td>
+                    <td class="td">${esc(s.customerName)}</td>
+                    <td class="td ${cancelled ? 'line-through' : 'text-emerald-600 font-bold'}">${fmt(s.total)}</td>
+                    <td class="td text-center whitespace-nowrap">
+                        <button data-act="view-sale" data-id="${esc(s.id)}" class="text-blue-500 text-xs px-1">عرض / طباعة</button>
+                        ${cancelled ? '' : `<button data-act="cancel-sale" data-id="${esc(s.id)}" class="text-red-500 text-xs px-1">إلغاء</button>`}
+                    </td></tr>`;
+            }).join('') || `<tr><td colspan="5" class="text-center py-4 text-slate-400">لا توجد مبيعات</td></tr>`;
+        }
+
+        function viewSale(id) {
+            const s = salesHistory.find(x => x.id === id);
+            if (s) showInvoice(s);
+        }
+
+        async function cancelSale(id) {
+            if (!(await confirmDialog(`إلغاء الفاتورة ${id} وإرجاع الكميات للمخزون؟`))) return;
+            try {
+                await db.runTransaction(async tx => {
+                    const sref = db.collection('sales').doc(id);
+                    const ss = await tx.get(sref);
+                    if (!ss.exists) throw new Error('الفاتورة غير موجودة');
+                    const s = ss.data();
+                    if (s.status === 'cancelled') throw new Error('الفاتورة ملغاة بالفعل');
+                    const refs = s.items.map(i => db.collection('inventory').doc(i.barcode));
+                    const snaps = await Promise.all(refs.map(r => tx.get(r)));
+                    snaps.forEach((snap, idx) => {
+                        const it = s.items[idx];
+                        if (snap.exists) tx.update(refs[idx], { qty: FV.increment(it.qty) });
+                        else tx.set(refs[idx], { barcode: it.barcode, name: it.name, qty: it.qty, minStock: 3, wholesale: it.cost || 0, retail: it.price });
+                    });
+                    tx.update(sref, { status: 'cancelled', cancelledAt: TS.now() });
+                });
+                logActivity(`إلغاء فاتورة ${id}`);
+                toast('تم إلغاء الفاتورة وإرجاع المخزون', 'success');
+            } catch (e) { toast(e.message || 'تعذر إلغاء الفاتورة', 'error'); }
+        }
+
+        // ================= Purchases =================
+        function renderPurchasesSelect() {
+            const sel = $('purchaseItemSelect');
+            const cur = sel.value;
+            sel.innerHTML = inventory.map(i => `<option value="${esc(i.barcode)}">${esc(i.name)}</option>`).join('') || '<option value="">لا توجد أصناف</option>';
+            if (cur && invMap[cur]) sel.value = cur;
+        }
+
+        function prefillPurchaseCost() {
+            const item = invMap[$('purchaseItemSelect').value];
+            if (item) $('purchaseCost').value = Number(item.wholesale) || 0;
+        }
+
+        function renderPurchasesHistory(list) {
+            $('purchasesTableBody').innerHTML = list.map(p => `<tr>
+                <td class="td text-xs">${esc(fmtDT(p.createdAt))}</td>
+                <td class="td">${esc(p.supplier)}</td>
+                <td class="td">${esc(p.itemName)}</td>
+                <td class="td">${esc(p.qty)}</td>
+                <td class="td">${fmt(p.cost)}</td>
+                <td class="td font-bold">${fmt(p.total)}</td></tr>`).join('') || `<tr><td colspan="6" class="text-center py-4 text-slate-400">لا توجد مشتريات</td></tr>`;
+        }
+
+        async function addPurchase() {
+            const barcode = $('purchaseItemSelect').value;
+            const supplier = $('purchaseSupplier').value.trim() || 'مورد عام';
+            const qty = Number($('purchaseQuantity').value);
+            const cost = Number($('purchaseCost').value);
+            if (!barcode || !invMap[barcode]) return toast('اختر صنفاً (أو أضف صنفاً جديداً بزر +)', 'error');
+            if (!Number.isInteger(qty) || qty < 1) return toast('الكمية غير صحيحة', 'error');
+            if (!Number.isFinite(cost) || cost < 0) return toast('التكلفة غير صحيحة', 'error');
+
+            setBusy(['btnPurchase'], true);
+            try {
+                let itemName = '';
+                await db.runTransaction(async tx => {
+                    const ref = db.collection('inventory').doc(barcode);
+                    const snap = await tx.get(ref);
+                    if (!snap.exists) throw new Error('الصنف غير موجود');
+                    const d = snap.data();
+                    itemName = d.name;
+                    const upd = { qty: Number(d.qty) + qty };
+                    if (cost > 0) upd.wholesale = cost;
+                    tx.update(ref, upd);
+                    tx.set(db.collection('purchases').doc(), {
+                        supplier, barcode, itemName: d.name, qty, cost, total: qty * cost,
+                        dateKey: dateKey(new Date()), createdAt: TS.now()
+                    });
+                });
+                logActivity(`مشتريات من ${supplier}: ${itemName} × ${qty}`);
+                $('purchaseQuantity').value = 1;
+                toast('تم تحديث المخزون', 'success');
+            } catch (e) { toast(e.message || 'تعذر حفظ المشتريات', 'error'); }
+            finally { setBusy(['btnPurchase'], false); }
+        }
+
+        // ================= Excel =================
+        function exportInventoryExcel() {
+            if (!inventory.length) return toast('لا توجد أصناف للتصدير', 'error');
+            const rows = inventory.map(i => ({ 'الباركود': i.barcode, 'اسم الصنف': i.name, 'الكمية': i.qty, 'حد التنبيه': i.minStock, 'سعر الجملة': i.wholesale, 'سعر البيع': i.retail }));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'المخزون');
+            XLSX.writeFile(wb, `inventory-${dateKey(new Date())}.xlsx`);
+        }
+
+        function exportSalesExcel() {
+            if (!salesHistory.length) return toast('لا توجد مبيعات للتصدير', 'error');
+            const rows = salesHistory.map(s => ({ 'رقم الفاتورة': s.invoiceNo, 'التاريخ': fmtDT(s.createdAt), 'العميل': s.customerName, 'الإجمالي': s.total, 'الربح': s.profit, 'الحالة': s.status === 'cancelled' ? 'ملغاة' : 'سارية' }));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'المبيعات');
+            XLSX.writeFile(wb, `sales-${dateKey(new Date())}.xlsx`);
+        }
+
+        // ================= Settings =================
+        function openSettings() {
+            $('settingsShopName').value = shopName;
+            $('settingsEmail').value = userEmail;
+            $('settingsPhone').value = userPhone;
+            $('settingsModal').classList.remove('hidden');
+        }
+
+        async function saveSettings() {
+            const s = {
+                shopName: $('settingsShopName').value.trim() || shopName,
+                email: $('settingsEmail').value.trim(),
+                phone: $('settingsPhone').value.trim()
+            };
+            try {
+                await db.doc('settings/main').set(s, { merge: true });
+                closeModal('settingsModal');
+                toast('تم حفظ الإعدادات', 'success');
+            } catch (e) { onErr(e); }
+        }
+
+        // ================= Event delegation =================
+        document.addEventListener('click', e => {
+            const b = e.target.closest('[data-act]');
+            if (!b) return;
+            const id = b.dataset.id;
+            switch (b.dataset.act) {
+                case 'edit-item': editItem(id); break;
+                case 'del-item': deleteItem(id); break;
+                case 'cart-del': currentCart.splice(Number(id), 1); renderCart(); break;
+                case 'view-sale': viewSale(id); break;
+                case 'cancel-sale': cancelSale(id); break;
+            }
+        });
+
+        renderCart();
+    </script>
+</body>
+</html>
